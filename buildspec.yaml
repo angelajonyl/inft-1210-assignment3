@@ -14,3 +14,9 @@ phases:
     commands:
       - echo Build completed on `date`
       - docker push 545009852032.dkr.ecr.us-east-1.amazonaws.com/my-flask-app:latest
+      # Create an imagedefinitions.json file that CodePipeline uses in the deploy stage:
+      - printf '[{"name":"my-flask-app","imageUri":"%s"}]' 545009852032.dkr.ecr.us-east-1.amazonaws.com/my-flask-app:latest > imagedefinitions.json
+
+artifacts:
+  files:
+    - imagedefinitions.json
