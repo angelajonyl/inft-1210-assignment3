@@ -3,6 +3,6 @@ app = Flask(__name__)
 
 @app.route('/')
 def hello_cloud():
-  return 'Hello from Reyes ECS Container!'
+  return 'Hello from Reyes ECS Container!!'
 
 app.run(host='0.0.0.0')
