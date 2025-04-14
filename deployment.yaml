@@ -1,0 +1,136 @@
+# deployment.yaml
+resources:
+  # Create a custom VPC network (no automatic subnetworks)
+  - name: my-vpc
+    type: compute.v1.network
+    properties:
+      autoCreateSubnetworks: false
+      name: my-vpc
+
+  # Create a public subnet for the Load Balancer in northamerica-northeast1 region
+  - name: public-subnet
+    type: compute.v1.subnetwork
+    properties:
+      region: northamerica-northeast1
+      ipCidrRange: 10.0.1.0/24
+      network: $(ref.my-vpc.selfLink)
+      name: public-subnet
+
+  # Create a private subnet for your targets (or container services)
+  - name: private-subnet
+    type: compute.v1.subnetwork
+    properties:
+      region: northamerica-northeast1
+      ipCidrRange: 10.0.2.0/24
+      network: $(ref.my-vpc.selfLink)
+      name: private-subnet
+
+  # Create a firewall rule to allow HTTP traffic from anywhere to the LB (port 80)
+  - name: fw-allow-http
+    type: compute.v1.firewall
+    properties:
+      network: $(ref.my-vpc.selfLink)
+      name: fw-allow-http
+      sourceRanges:
+        - "0.0.0.0/0"
+      allowed:
+        - IPProtocol: tcp
+          ports:
+            - "80"
+
+  # Create a firewall rule to allow internal traffic on port 5000 to your targets
+  - name: fw-allow-target
+    type: compute.v1.firewall
+    properties:
+      network: $(ref.my-vpc.selfLink)
+      name: fw-allow-target
+      sourceRanges:
+        - "10.0.0.0/8"
+      allowed:
+        - IPProtocol: tcp
+          ports:
+            - "5000"
+
+  # Reserve a global static IP address for the load balancer frontend
+  - name: lb-ip
+    type: compute.v1.globalAddress
+    properties:
+      name: lb-ip
+      ipVersion: IPV4
+
+  # Create a simple HTTP health check on port 5000 (for backend targets)
+  - name: health-check
+    type: compute.v1.httpHealthCheck
+    properties:
+      name: health-check
+      port: 5000
+      requestPath: "/"
+
+  # Create an instance template for backend instances (simulating container service targets)
+  - name: instance-template
+    type: compute.v1.instanceTemplate
+    properties:
+      properties:
+        machineType: n1-standard-1
+        disks:
+          - boot: true
+            autoDelete: true
+            initializeParams:
+              sourceImage: projects/debian-cloud/global/images/family/debian-10
+        networkInterfaces:
+          - network: $(ref.my-vpc.selfLink)
+            subnetwork: $(ref.private-subnet.selfLink)
+            # No accessConfig means no public IP in the private subnet.
+        metadata:
+          items:
+            - key: startup-script
+              value: |
+                #!/bin/bash
+                # Sample startup script to run your application (adjust as needed)
+                echo "Starting application on port 5000"
+                # For example, run a simple Python HTTP server:
+                cd / && python -m http.server 5000
+  # Create a managed instance group as the backend target for the load balancer
+  - name: instance-group
+    type: compute.v1.instanceGroupManager
+    properties:
+      baseInstanceName: backend-instance
+      instanceTemplate: $(ref.instance-template.selfLink)
+      targetSize: 2
+      zone: northamerica-northeast1-b
+
+  # Create a backend service for the load balancer that uses the instance group as its backend
+  - name: backend-service
+    type: compute.v1.backendService
+    properties:
+      name: backend-service
+      protocol: HTTP
+      backends:
+        - group: $(ref.instance-group.instanceGroup)
+      healthChecks:
+        - $(ref.health-check.selfLink)
+      timeoutSec: 10
+
+  # Create a URL map that routes all requests to the backend service
+  - name: url-map
+    type: compute.v1.urlMap
+    properties:
+      name: url-map
+      defaultService: $(ref.backend-service.selfLink)
+
+  # Create a target HTTP proxy that uses the URL map
+  - name: target-http-proxy
+    type: compute.v1.targetHttpProxy
+    properties:
+      name: target-http-proxy
+      urlMap: $(ref.url-map.selfLink)
+
+  # Create a global forwarding rule to route external traffic on port 80 to the target HTTP proxy
+  - name: global-forwarding-rule
+    type: compute.v1.globalForwardingRule
+    properties:
+      name: global-forwarding-rule
+      IPAddress: $(ref.lb-ip.address)
+      IPProtocol: TCP
+      portRange: "80"
+      target: $(ref.target-http-proxy.selfLink)
